@@ -21,31 +21,6 @@ RESTORE_SNAPSHOT="${RESTORE_SNAPSHOT:-}"  # Set to snapshot name to restore befo
 
 mkdir -p "$RESULTS_DIR"
 
-echo "==================================="
-echo "Linux Scheduler Performance Test"
-echo "==================================="
-echo "Results will be saved to: $RESULTS_DIR"
-echo ""
-
-# Check VM is running
-check_vm_running
-
-# Optionally restore from snapshot
-if [ -n "$RESTORE_SNAPSHOT" ]; then
-    echo "Restoring VM from snapshot: $RESTORE_SNAPSHOT"
-    "$SCRIPT_DIR/vm-stop.sh"
-    "$SCRIPT_DIR/vm-snapshot.sh" restore "$RESTORE_SNAPSHOT"
-    "$SCRIPT_DIR/vm-start.sh"
-    check_vm_running
-fi
-
-# Deploy and start application
-deploy_app_to_vm
-start_app_in_vm
-wait_for_app
-
-echo ""
-
 # Check if VM is running
 check_vm_running() {
     if ! nc -z localhost "$VM_SSH_PORT" 2>/dev/null; then
@@ -66,9 +41,13 @@ deploy_app_to_vm() {
         exit 1
     fi
     
+    # Ensure app directory exists
+    ssh -p "$VM_SSH_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "$VM_USER@localhost" "sudo mkdir -p $VMAPP_PATH && sudo chown $VM_USER:$VM_USER $VMAPP_PATH"
+    
     # Copy JAR to VM
     scp -P "$VM_SSH_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        "$SPRING_BOOT_JAR" "$VM_USER@localhost:$VM_APP_PATH/banking-app.jar"
+        "$SPRING_BOOT_JAR" "$VM_USER@localhost:$VMAPP_PATH/banking-app.jar"
     
     echo "Application deployed to VM"
 }
@@ -77,12 +56,10 @@ deploy_app_to_vm() {
 start_app_in_vm() {
     echo "Starting Spring Boot application in VM..."
     
-    # Kill any existing instance
-    "$SCRIPT_DIR/vm-ssh.sh" "pkill -f banking-app.jar || true"
-    sleep 2
-    
-    # Start application with Kafka pointing to host
-    "$SCRIPT_DIR/vm-ssh.sh" "cd $VM_APP_PATH && KAFKA_BOOTSTRAP_SERVERS=10.0.2.2:9092 nohup java -jar banking-app.jar > app.log 2>&1 &"
+    # Kill any existing instance and start new one
+    # Use -f flag to background SSH immediately
+    ssh -f -p "$VM_SSH_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        "$VM_USER@localhost" "pkill -f banking-app.jar || true; sleep 2; cd $VMAPP_PATH && nohup env KAFKA_BOOTSTRAP_SERVERS=localhost:9092 java -jar banking-app.jar > app.log 2>&1 &"
     
     echo "Application started in VM"
 }
@@ -136,6 +113,35 @@ collect_metrics() {
     echo "--- sched_ext Schedulers Available ---" >> "$output_file"
     "$SCRIPT_DIR/vm-ssh.sh" "ls -la /usr/local/bin/scx_* 2>/dev/null || echo 'No schedulers found'" >> "$output_file"
 }
+
+# =====================================================================
+# Main execution starts here
+# =====================================================================
+
+echo "==================================="
+echo "Linux Scheduler Performance Test"
+echo "==================================="
+echo "Results will be saved to: $RESULTS_DIR"
+echo ""
+
+# Check VM is running
+check_vm_running
+
+# Optionally restore from snapshot
+if [ -n "$RESTORE_SNAPSHOT" ]; then
+    echo "Restoring VM from snapshot: $RESTORE_SNAPSHOT"
+    "$SCRIPT_DIR/vm-stop.sh"
+    "$SCRIPT_DIR/vm-snapshot.sh" restore "$RESTORE_SNAPSHOT"
+    "$SCRIPT_DIR/vm-start.sh"
+    check_vm_running
+fi
+
+# Deploy and start application
+deploy_app_to_vm
+start_app_in_vm
+wait_for_app
+
+echo ""
 
 # Test each scheduler
 for scheduler in "cfs" "${SCHEDULERS[@]}"; do

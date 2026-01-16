@@ -42,3 +42,6 @@ hs_err_pid*
 
 # Spring Boot
 spring-boot-app/target/
+
+# ignore kernel and sched_ext build artifacts
+kernel-build/

@@ -1,7 +1,15 @@
 #!/bin/bash
 
 # Setup and provision a Debian VM for scheduler testing
-# This script creates a QEMU VM with all necessary dependencies
+# This script creates a QEMU VM with build tools, Kafka, and Zookeeper installed via cloud-init.
+# 
+# The workflow is:
+# 1. This script: Creates VM with Debian 13 + build tools + Kafka (~10-15 min)
+# 2. build-kernel.sh: Build custom kernel on host with all CPU cores (~20 min)
+# 3. install-kernel-to-vm.sh: Copy and install pre-built kernel to VM (~1 min)
+# 4. build-schedulers-in-vm.sh: Build schedulers inside VM (~10-15 min with custom kernel)
+#
+# This approach is much faster than building everything in the VM.
 
 set -e
 
@@ -121,40 +129,6 @@ packages:
   - rsync
 
 runcmd:
-  # Install Rust
-  - sudo -u $VM_USER bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
-  - sudo -u $VM_USER bash -c 'echo "source \$HOME/.cargo/env" >> /home/$VM_USER/.bashrc'
-  
-  # Download and prepare kernel source with sched_ext enabled
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER && wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.6.tar.xz'
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER && tar xf linux-6.12.6.tar.xz'
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/linux-6.12.6 && git init && git config user.email "builder@localhost" && git config user.name "Builder" && git add -A && git commit -m "Initial commit"'
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/linux-6.12.6 && cp /boot/config-\$(uname -r) .config'
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/linux-6.12.6 && echo "CONFIG_SCHED_CLASS_EXT=y" >> .config && echo "CONFIG_SCHED_DEBUG=y" >> .config'
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/linux-6.12.6 && make olddefconfig'
-  
-  # Build kernel with 6 parallel jobs
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/linux-6.12.6 && make -j6 deb-pkg LOCALVERSION=-schedext KDEB_PKGVERSION=\$(make kernelversion)-1'
-  
-  # Install custom kernel and update GRUB to boot it by default
-  - bash -c 'cd /home/$VM_USER && dpkg -i linux-image-6*.deb linux-headers-6*.deb'
-  - sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Debian GNU\\/Linux>Debian GNU\\/Linux, with Linux 6.12.6-schedext"/' /etc/default/grub
-  - update-grub
-  
-  # Clone sched_ext repository
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER && git clone https://github.com/sched-ext/scx.git'
-  
-  # Build and install C schedulers (need PATH for bpftool)
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/scx && source /home/$VM_USER/.cargo/env && export PATH=/usr/sbin:\$PATH && make'
-  - bash -c 'cd /home/$VM_USER/scx && make install'
-  
-  # Build Rust schedulers with 6 parallel jobs
-  - sudo -u $VM_USER bash -c 'cd /home/$VM_USER/scx/scheds/rust && source /home/$VM_USER/.cargo/env && export PATH=/usr/sbin:\$PATH && cargo build --release -j6 --workspace'
-  
-  # Install key Rust schedulers to /usr/local/bin
-  - bash -c 'cp /home/$VM_USER/scx/target/release/scx_rusty /home/$VM_USER/scx/target/release/scx_lavd /home/$VM_USER/scx/target/release/scx_bpfland /home/$VM_USER/scx/target/release/scx_layered /usr/local/bin/'
-  - bash -c 'chmod +x /usr/local/bin/scx_*'
-  
   # Create application directory
   - mkdir -p /opt/banking-app
   - chown $VM_USER:$VM_USER /opt/banking-app
@@ -202,7 +176,7 @@ if [ -z "$QEMU_PID" ]; then
     exit 1
 fi
 
-# Wait for SSH to become available
+# Wait for SSH to become available and cloud-init to finish
 echo "Waiting for VM to boot and SSH to become available..."
 for i in {1..120}; do
     if nc -z localhost 2222 2>/dev/null; then
@@ -216,52 +190,44 @@ for i in {1..120}; do
     sleep 5
 done
 
-# Wait for cloud-init to complete with progress updates
-echo "Waiting for cloud-init to complete provisioning..."
-echo "This takes 25-35 minutes due to kernel build (make -j6 deb-pkg with 8 CPUs)"
+# Wait for cloud-init to complete package installation
+echo "Waiting for cloud-init to complete package installation..."
+echo "This takes ~10-15 minutes (installs build tools, Kafka, Zookeeper, and reboots)"
 echo ""
-sleep 10
 
-LAST_LOG_SIZE=0
-for i in {1..540}; do  # 90 minutes = 540 iterations of 10 seconds
-    # Check if cloud-init is done
-    if ssh -p 2222 -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$VM_USER@localhost" "cloud-init status 2>/dev/null | grep -q 'status: done'" 2>/dev/null; then
+WAIT_COUNT=0
+MAX_WAIT=180  # 30 minutes max
+while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+    # Try to check cloud-init status
+    if ssh -p 2222 -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null "$VM_USER@localhost" "cloud-init status --wait 2>/dev/null" 2>&1 | grep -q "done\|disabled"; then
         echo ""
         echo "Cloud-init completed!"
         break
     fi
     
-    # Show progress every 30 seconds
-    if [ $((i % 3)) -eq 0 ]; then
-        MINUTES=$((i / 6))
-        # Get last few lines of cloud-init log to show current activity
-        CURRENT_ACTIVITY=$(ssh -p 2222 -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$VM_USER@localhost" "sudo tail -3 /var/log/cloud-init-output.log 2>/dev/null | grep -v '^$' | tail -1" 2>/dev/null || echo "Building...")
-        
-        # Check log size to detect if build is progressing
-        CURRENT_LOG_SIZE=$(ssh -p 2222 -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$VM_USER@localhost" "sudo wc -c < /var/log/cloud-init-output.log 2>/dev/null" 2>/dev/null || echo "0")
-        
-        if [ "$CURRENT_LOG_SIZE" -gt "$LAST_LOG_SIZE" ]; then
-            echo "[$MINUTES min] Active: ${CURRENT_ACTIVITY:0:80}"
-            LAST_LOG_SIZE=$CURRENT_LOG_SIZE
-        else
-            echo "[$MINUTES min] Waiting..."
-        fi
+    MINUTES=$((WAIT_COUNT / 6))
+    if [ $((WAIT_COUNT % 6)) -eq 0 ] && [ $WAIT_COUNT -gt 0 ]; then
+        echo "[$MINUTES min] Waiting for cloud-init..."
     fi
     
     sleep 10
+    WAIT_COUNT=$((WAIT_COUNT + 1))
 done
 
+# Shutdown VM to create clean snapshot
 echo ""
-echo "Verifying sched_ext installation..."
-ssh -p 2222 -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$VM_USER@localhost" "command -v scx_rusty && command -v scx_lavd && command -v scx_bpfland && command -v scx_layered" || echo "Warning: Some schedulers may not be installed"
+echo "Shutting down VM to create clean snapshot..."
+ssh -p 2222 -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$VM_USER@localhost" "sudo poweroff" 2>/dev/null || true
+
+# Wait for VM to shutdown
+sleep 10
+if ps -p $QEMU_PID > /dev/null 2>&1; then
+    kill $QEMU_PID 2>/dev/null || true
+    sleep 3
+fi
 
 # Create clean snapshot
-echo ""
 echo "Creating clean snapshot..."
-kill $QEMU_PID 2>/dev/null || true
-wait $QEMU_PID 2>/dev/null || true
-sleep 5
-
 qemu-img snapshot -c "clean-install" "$VM_IMAGE"
 
 echo ""
@@ -273,7 +239,22 @@ echo "VM Image: $VM_IMAGE"
 echo "SSH Key: $SSH_KEY"
 echo "Clean snapshot created: clean-install"
 echo ""
+echo "The VM has Debian 13 with build tools, Kafka, and Zookeeper pre-installed."
+echo "Kafka is running on port 9092, Zookeeper on port 2181."
+echo ""
 echo "Next steps:"
-echo "  1. Start VM: $SCRIPT_DIR/vm-start.sh"
-echo "  2. Connect: $SCRIPT_DIR/vm-ssh.sh"
-echo "  3. Run tests: $SCRIPT_DIR/run-scheduler-test.sh"
+echo ""
+echo "  1. Build custom kernel on host (if not already done):"
+echo "     $SCRIPT_DIR/build-kernel.sh"
+echo ""
+echo "  2. Start the VM:"
+echo "     $SCRIPT_DIR/vm-start.sh"
+echo ""
+echo "  3. Install custom kernel to VM:"
+echo "     $SCRIPT_DIR/install-kernel-to-vm.sh"
+echo ""
+echo "  4. Build schedulers in VM:"
+echo "     $SCRIPT_DIR/build-schedulers-in-vm.sh"
+echo ""
+echo "  5. Run scheduler tests:"
+echo "     $SCRIPT_DIR/run-scheduler-test.sh"

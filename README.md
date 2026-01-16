@@ -38,10 +38,10 @@ linux-scheduler-test/
 ## Scope
 
 - **Spring Boot Application**: Simulates a Banking Transaction system with REST APIs (runs in VM)
-- **Message Broker**: Uses Kafka for async message processing (runs on host, optional)
+- **Message Broker**: Uses Kafka for async message processing (runs in VM, pre-installed)
 - **Database**: H2 in-memory database for fast transaction processing
 - **Load Testing**: Gatling framework with realistic user scenarios (runs on host)
-- **VM Infrastructure**: QEMU with Debian 13 (trixie), cloud-init provisioning, 12GB RAM, kernel 6.12+ with sched_ext support
+- **VM Infrastructure**: QEMU with Debian 13 (trixie), cloud-init provisioning, 16GB RAM, kernel 6.12+ with sched_ext support, Kafka and Zookeeper pre-installed
 - **Schedulers Tested**:
   - CFS (Completely Fair Scheduler) - default Linux scheduler
   - scx_rusty - Rusty sched_ext scheduler  
@@ -79,7 +79,7 @@ Test execution completes in **7-10 seconds** and includes:
 - QEMU/KVM installed
 - Java 17 or higher (for Gatling on host)
 - Maven 3.6+
-- 16GB+ RAM recommended (VM uses 12GB)
+- 16GB+ RAM recommended (VM uses 16GB)
 - 50GB+ free disk space (for VM image and kernel builds)
 
 ### Installing Host Dependencies
@@ -96,32 +96,23 @@ sudo usermod -aG kvm $USER  # Add yourself to kvm group
 # Log out and back in for group change to take effect
 ```
 
-### Optional: Kafka Setup on Host
-```bash
-# Using Docker (recommended)
-docker run -d --name kafka -p 9092:9092 \
-  apache/kafka:latest
-
-# Or using native installation
-# Download and run Kafka from https://kafka.apache.org/downloads
-```
-
-**Note**: The VM automatically accesses host Kafka at `10.0.2.2:9092` (QEMU user-mode networking)
-
 ## Quick Start
 
-### 1. One-Time VM Setup (Takes 30-60 minutes)
+### 1. One-Time VM Setup (Takes 45-60 minutes)
 ```bash
-# This creates and provisions a Debian VM with sched_ext support
+# This creates and provisions a Debian VM with Kafka and sched_ext support
 ./scripts/setup-vm.sh
 ```
 
 This will:
 - Download Debian cloud image
-- Create a QEMU VM with 12GB RAM, 40GB disk
-- Install Java, Maven, Rust, build tools
+- Create a QEMU VM with 16GB RAM, 40GB disk
+- Install Java, Maven, Rust, build tools, Kafka, and Zookeeper
+- Configure Kafka topics (transactions, fraud-alerts)
 - Clone and build sched_ext kernel schedulers
 - Create a clean snapshot for easy resets
+
+**Note**: Kafka and Zookeeper are automatically installed and configured in the VM. No separate setup needed!
 
 ### 2. Build the Spring Boot Application
 ```bash
@@ -138,29 +129,23 @@ cd ..
 The VM will be accessible at:
 - SSH: `localhost:2222`
 - Application: `localhost:8080` (once deployed)
+- Kafka: `localhost:9092`
 
-### 4. Optional: Start Kafka on Host
-```bash
-# Start Kafka if you want async event processing
-# Note: The application works without Kafka - it's conditionally loaded
-docker run -d --name kafka -p 9092:9092 apache/kafka:latest
-```
+Kafka and Zookeeper start automatically with the VM.
 
-**Note**: Kafka is optional. The application uses `@ConditionalOnProperty` to only load Kafka components when `kafka.enabled=true` in application.properties. Tests run with Kafka disabled.
-
-### 5. Run Full Scheduler Comparison
+### 4. Run Full Scheduler Comparison
 ```bash
 ./scripts/run-scheduler-test.sh
 ```
 
 This will:
-- Deploy the Spring Boot app to the VM
+- Deploy the Spring Boot app to the VM (with Kafka enabled)
 - Test CFS and all available sched_ext schedulers
 - Run 5-minute load tests for each scheduler
 - Generate comprehensive reports with Gatling
 - Collect system metrics from the VM
 
-### 6. View Results
+### 5. View Results
 ```bash
 # Results are saved with timestamp
 ls -la results/
@@ -169,7 +154,7 @@ ls -la results/
 firefox results/[timestamp]/cfs_gatling_results/index.html
 ```
 
-### 7. Stop the VM When Done
+### 6. Stop the VM When Done
 ```bash
 ./scripts/vm-stop.sh
 ```

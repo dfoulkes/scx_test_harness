@@ -11,59 +11,72 @@ class BankingTransactionSimulation extends Simulation {
     .acceptHeader("application/json")
     .contentTypeHeader("application/json")
 
+  // Simple feeders for test data
+  val accountIdFeeder = Iterator.continually(Map("accountId" -> scala.util.Random.nextInt(1000)))
+  val amountFeeder = Iterator.continually(Map("amount" -> (scala.util.Random.nextInt(2000) + 1000)))
+  val userNameFeeder = Iterator.continually(Map("userName" -> s"User${scala.util.Random.nextInt(1000000)}"))
+
   val createAccountScenario = scenario("Create Account")
+    .feed(userNameFeeder)
     .exec(http("Create Account")
       .post("/api/accounts")
-      .body(StringBody("""{"accountName": "User ${__Random.randomInt(1000000)}", "initialBalance": 10000.00}""")).asJson
-      .check(status.is(201))
-      .check(jsonPath("$.accountId").saveAs("accountId")))
+      .body(StringBody("""{"accountName": "${userName}", "initialBalance": 10000.00}""")).asJson
+      .check(status.is(201)))
     .pause(1)
 
   // CPU-INTENSIVE: Transfer with fraud detection and risk assessment
   val transferScenario = scenario("CPU-Heavy Transfer with Fraud Detection")
+    .feed(accountIdFeeder)
+    .feed(amountFeeder)
     .exec(http("Transfer Money")
       .post("/api/transactions/transfer")
-      .body(StringBody("""{"fromAccountId": ${__Random.randomInt(1000)}, "toAccountId": ${__Random.randomInt(1000)}, "amount": ${__Random.randomDouble() * 2000 + 1000}}""")).asJson
+      .body(StringBody("""{"fromAccountId": ${accountId}, "toAccountId": ${accountId}, "amount": ${amount}}""")).asJson
       .check(status.in(200, 400, 404)))
     .pause(100.milliseconds)
 
   // CPU-INTENSIVE: Monte Carlo simulation with 15,000 iterations
   val riskAnalysisScenario = scenario("Risk Analysis - Monte Carlo")
+    .feed(accountIdFeeder)
     .exec(http("Risk Analysis")
-      .get("/api/accounts/${__Random.randomInt(1000)}/risk-analysis")
+      .get("/api/accounts/${accountId}/risk-analysis")
       .check(status.in(200, 404)))
     .pause(100.milliseconds)
 
   // CPU-INTENSIVE: Portfolio optimization with 2000 gradient descent iterations
   val portfolioOptScenario = scenario("Portfolio Optimization")
+    .feed(accountIdFeeder)
     .exec(http("Portfolio Optimization")
-      .get("/api/accounts/${__Random.randomInt(1000)}/portfolio-optimization")
+      .get("/api/accounts/${accountId}/portfolio-optimization")
       .check(status.in(200, 404)))
     .pause(100.milliseconds)
 
   // CPU-INTENSIVE: Cryptographic hashing and pattern analysis (8 parallel threads)
   val fraudCheckScenario = scenario("Fraud Detection - Multi-threaded")
+    .feed(accountIdFeeder)
     .exec(http("Fraud Check")
-      .get("/api/accounts/${__Random.randomInt(1000)}/fraud-check?amount=5000")
+      .get("/api/accounts/${accountId}/fraud-check?amount=5000")
       .check(status.in(200, 404)))
     .pause(50.milliseconds)
 
   // CPU-INTENSIVE: Distributed prime search (12 parallel threads)
   val distributedPrimeScenario = scenario("Distributed Prime Search")
+    .feed(accountIdFeeder)
     .exec(http("Prime Search")
-      .get("/api/accounts/${__Random.randomInt(1000)}/distributed-prime-search?rangeSize=100000")
+      .get("/api/accounts/${accountId}/distributed-prime-search?rangeSize=100000")
       .check(status.in(200, 404)))
     .pause(100.milliseconds)
 
   val checkBalanceScenario = scenario("Check Balance")
+    .feed(accountIdFeeder)
     .exec(http("Get Balance")
-      .get("/api/accounts/${__Random.randomInt(1000)}/balance")
+      .get("/api/accounts/${accountId}/balance")
       .check(status.in(200, 404)))
     .pause(2)
 
   val transactionHistoryScenario = scenario("Transaction History")
+    .feed(accountIdFeeder)
     .exec(http("Get Transaction History")
-      .get("/api/accounts/${__Random.randomInt(1000)}/transactions")
+      .get("/api/accounts/${accountId}/transactions")
       .check(status.in(200, 404)))
     .pause(1)
 

@@ -14,6 +14,7 @@ VM_RAM="${VM_RAM:-16G}"
 VM_CPUS="${VM_CPUS:-8}"
 VM_SSH_PORT="${VM_SSH_PORT:-2222}"
 VM_APP_PORT="${VM_APP_PORT:-8080}"
+VM_KAFKA_PORT="${VM_KAFKA_PORT:-9092}"
 PIDFILE="${PIDFILE:-$VM_DIR/qemu.pid}"
 
 # Check if VM is already running
@@ -52,6 +53,7 @@ echo "  RAM: $VM_RAM"
 echo "  CPUs: $VM_CPUS"
 echo "  SSH Port: $VM_SSH_PORT -> 22"
 echo "  App Port: $VM_APP_PORT -> 8080"
+echo "  Kafka Port: $VM_KAFKA_PORT -> 9092"
 echo "  Image: $VM_IMAGE"
 
 # Start QEMU with user-mode networking
@@ -61,7 +63,7 @@ qemu-system-x86_64 \
     -smp "$VM_CPUS" \
     -m "$VM_RAM" \
     -drive file="$VM_IMAGE",format=qcow2,if=virtio \
-    -netdev user,id=net0,hostfwd=tcp::${VM_SSH_PORT}-:22,hostfwd=tcp::${VM_APP_PORT}-:8080 \
+    -netdev user,id=net0,hostfwd=tcp::${VM_SSH_PORT}-:22,hostfwd=tcp::${VM_APP_PORT}-:8080,hostfwd=tcp::${VM_KAFKA_PORT}-:9092 \
     -device virtio-net-pci,netdev=net0 \
     -display none \
     $SNAPSHOT_OPTS \
