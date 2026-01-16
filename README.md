@@ -424,6 +424,59 @@ graph TB
 - **Networking**: QEMU user-mode networking (`10.0.2.2` = host from VM perspective)
 - **Schedulers**: Dynamically switchable via `/sys/kernel/sched_ext/state`
 
+## Limitations
+
+### Virtualization Overhead
+- **Not Bare Metal**: Tests run in QEMU/KVM, which adds virtualization overhead that may not reflect bare metal performance
+- **Nested Scheduling**: The host's scheduler affects the VM's scheduler, creating a nested scheduling scenario
+- **CPU Pinning**: QEMU vCPUs are scheduled by the host kernel, which can introduce variability
+- **Impact**: Results show *relative* performance differences between schedulers, not absolute bare metal performance
+
+### Workload Constraints
+- **Single Application**: Only tests one Spring Boot application, not representative of multi-application server workloads
+- **Synthetic Load**: Gatling simulates user behavior but doesn't capture all real-world patterns
+- **In-Memory Database**: H2 database doesn't test I/O-bound workloads that might benefit differently from schedulers
+- **No CPU-Intensive Tasks**: Banking operations are relatively lightweight compared to rendering, compilation, or scientific computing
+
+### Scheduler Feature Coverage
+- **Limited Topology Testing**: Doesn't extensively test NUMA awareness, cache affinity, or complex CPU topologies
+- **No Interactive Workloads**: Doesn't measure desktop responsiveness or latency-sensitive GUI applications
+- **Limited I/O Testing**: Minimal testing of I/O scheduler interactions
+- **No Real-Time Testing**: Doesn't test real-time scheduling guarantees or deadlines
+
+### Testing Environment
+- **Network Latency**: Port forwarding adds minimal latency that wouldn't exist in bare metal deployments
+- **Resource Isolation**: VM provides perfect isolation but doesn't test scheduler behavior under system-wide contention
+- **Fixed Kernel Version**: Tests specific kernel version (6.12.6), scheduler behavior may vary across versions
+- **Limited Schedulers**: Only tests available sched_ext schedulers, not all possible scheduling policies
+
+### Measurement Accuracy
+- **Sampling Overhead**: Gatling and metrics collection add measurement overhead
+- **Warm-up Effects**: JVM warm-up and JIT compilation affect early test results
+- **Statistical Variance**: Results can vary between runs due to system state, cache effects, and timing
+- **No Hardware Counters**: Doesn't collect PMU (Performance Monitoring Unit) data for deep CPU analysis
+
+### Recommendations for Interpretation
+1. **Use for Comparison**: Results are most valuable for *comparing* schedulers under identical conditions
+2. **Understand Context**: Performance differences are specific to this workload and may not generalize
+3. **Validate on Bare Metal**: Important findings should be validated on bare metal systems
+4. **Consider Your Workload**: Choose schedulers based on similarity to your actual production workload
+5. **Multiple Runs**: Run tests multiple times and analyze variance before drawing conclusions
+
+### What This Harness IS Good For
+✅ Comparing relative scheduler performance under controlled conditions  
+✅ Quick prototyping and testing of scheduler configurations  
+✅ Educational exploration of sched_ext capabilities  
+✅ Identifying obvious performance regressions or improvements  
+✅ Testing scheduler behavior under specific workload patterns
+
+### What This Harness IS NOT Good For
+❌ Absolute bare metal performance measurement  
+❌ Production deployment decisions without validation  
+❌ Testing real-time or latency-critical applications  
+❌ Comprehensive scheduler feature validation  
+❌ Hardware-specific optimizations (NUMA, cache topology)
+
 ## License
 
 MIT
