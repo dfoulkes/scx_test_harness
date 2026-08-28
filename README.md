@@ -8,7 +8,13 @@ One-command automated testing of Linux sched_ext schedulers with real-world work
 
 ## 🏆 Key Findings
 
-I tested 5 schedulers with a CPU-intensive Spring Boot banking application (17,370 requests per test):
+I tested 5 schedulers with a CPU-intensive Spring Boot banking application (17,370 requests per test).
+
+> **⚠️ Provenance:** these numbers are from a **January 2026** run against **scx pre-v1.1.0** on
+> **kernel 6.12.6**. Both have moved on substantially since — scx v1.1.0 rewrote the build system
+> and added several schedulers, and scheduler behaviour is genuinely kernel-dependent. Treat the
+> table as a worked example of what the harness produces, not as current guidance. Re-run before
+> making a decision on it.
 
 | Scheduler | Success Rate | Mean Response | p95 Response | Best For |
 |-----------|-------------|---------------|--------------|----------|
@@ -53,6 +59,7 @@ linux-scheduler-test/
 │   ├── vm-snapshot.sh               # Create/restore VM snapshots
 │   ├── vm-scheduler-switch.sh       # Switch schedulers in VM
 │   ├── run-scheduler-test.sh        # Main test orchestrator
+│   ├── lib/scx-common.sh            # Shared scx pin, fetch, build + layout preflight
 │   ├── start-app.sh                 # Start app locally (legacy)
 │   ├── simple-test.sh               # Run test without scheduler switching
 │   └── analyze-results.sh           # Analyze test results
@@ -67,12 +74,28 @@ linux-scheduler-test/
 - **Database**: H2 in-memory database for fast transaction processing
 - **Load Testing**: Gatling framework with realistic user scenarios (runs on host)
 - **VM Infrastructure**: QEMU with Debian 13 (trixie), cloud-init provisioning, 16GB RAM, kernel 6.12+ with sched_ext support, Kafka and Zookeeper pre-installed
-- **Schedulers Tested**:
+- **sched_ext version**: pinned to **scx v1.1.3** (override with `SCX_REF`, see below)
+- **Schedulers Tested** (default roster):
   - CFS (Completely Fair Scheduler) - default Linux scheduler
-  - scx_rusty - Rusty sched_ext scheduler  
-  - scx_lavd - Low-latency scheduler
-  - scx_bpfland - BPF-based scheduler
-  - scx_layered - Layered scheduler
+  - scx_rusty - multi-domain, throughput-oriented
+  - scx_lavd - latency-criticality aware, low-latency
+  - scx_bpfland - interactive-task prioritising
+  - scx_flash - EDF-based, general purpose
+  - scx_p2dq - queue-based, general purpose
+  - scx_tickless - minimal-tick, throughput/server oriented
+
+  The build produces **18 schedulers** in total; the rest are installed to the
+  VM and can be selected via `SCHEDULERS=...`: `scx_beerland`, `scx_cake`,
+  `scx_chaos`, `scx_cosmos`, `scx_flow`, `scx_forge`, `scx_layered`,
+  `scx_mitosis`, `scx_mlfq`, `scx_pandemonium`, `scx_rlfifo`, `scx_rustland`.
+
+  Notes:
+  - `scx_layered` is excluded from the default roster because it needs a layer
+    config to be meaningful, and `scxctl`/`scx_loader` cannot drive it.
+  - `scx_flow` and `scx_mlfq` live in `scheds/experimental/`, not `scheds/rust/`.
+  - The workspace also builds `scx_arena_selftests` and `scx_characterize`.
+    These are a selftest suite and a workload-profiling tool, **not** schedulers,
+    and are filtered out of the install and test paths.
 
 ## Testing
 
@@ -159,7 +182,7 @@ sudo usermod -aG kvm $USER  # Add yourself to kvm group
 **Time:** ~70 minutes | **Output:** HTML performance reports + comparative metrics
 
 This will:
-1. ✅ Build custom Linux 6.12.6 kernel with sched_ext (~30 min)
+1. ✅ Build custom Linux 6.12.107 kernel with sched_ext (~30 min)
 2. ✅ Create and configure Debian VM (~5 min)
 3. ✅ Install 13 schedulers (~15 min)
 4. ✅ Run all scheduler tests with Gatling (~20 min)
@@ -324,15 +347,35 @@ constantUsersPerSec(50).during(2.minutes)  // Adjust users and duration
 ```
 
 ### Test Different Schedulers
-Edit [scripts/run-scheduler-test.sh](scripts/run-scheduler-test.sh):
+No need to edit the script - pass `SCHEDULERS` as an environment variable:
 ```bash
-SCHEDULERS=("scx_rusty" "scx_lavd" "scx_bpfland" "scx_layered" "scx_cosmos")
+SCHEDULERS="scx_rusty scx_lavd scx_cosmos" ./scripts/run-scheduler-test.sh
 ```
 
 ### Change Test Duration
 ```bash
-TEST_DURATION=600  # 10 minutes per scheduler in run-scheduler-test.sh
+TEST_DURATION=600 ./scripts/run-scheduler-test.sh   # 10 minutes per scheduler
 ```
+
+### Pin a Different sched_ext Version
+The harness pins upstream `scx` to a released tag (currently `v1.1.3`) in
+[scripts/lib/scx-common.sh](scripts/lib/scx-common.sh). Override per-run:
+```bash
+SCX_REF=v1.1.2 ./scripts/build-schedulers.sh   # an older release
+SCX_REF=main   ./scripts/build-schedulers.sh   # track upstream tip
+```
+Tracking `main` unpinned is what silently broke this harness once already: scx
+deleted its Makefile and `scheds/c` at v1.1.0 and the build scripts kept
+pulling a tree they could no longer build. The scripts now preflight the
+upstream layout and fail loudly rather than producing nothing.
+
+### Change the VM Kernel
+```bash
+KERNEL_VERSION=7.1.12 ./scripts/build-kernel.sh   # match a modern desktop
+```
+Default is `6.12.107` (current 6.12 LTS). Scheduler behaviour varies by kernel -
+for example `scx_rusty` from scx <= v1.1.2 crashes in `rusty_init_task` on
+kernels >= 7.1.5 (fixed upstream in v1.1.3, PR #3721).
 
 ## Networking Details
 
@@ -402,7 +445,7 @@ curl http://localhost:8080/actuator/health
 ```bash
 # Verify sched_ext kernel is running
 ./scripts/vm-ssh.sh "uname -r"
-# Should show: 6.12.6-schedext-*
+# Should show: 6.12.107-schedext-*
 
 # Check if another scheduler is already loaded
 ./scripts/vm-ssh.sh "sudo scx_dump --states"
@@ -704,7 +747,7 @@ graph TB
         end
     end
     
-    subgraph VM["💻 Debian 13 VM<br/>(16GB RAM, 8 vCPUs, Kernel 6.12.6)"]
+    subgraph VM["💻 Debian 13 VM<br/>(16GB RAM, 8 vCPUs, Kernel 6.12.107)"]
         subgraph App["Spring Boot Banking App"]
             REST["🌐 REST API<br/>Port 8080"]
             H2["💾 H2 Database<br/>(In-Memory)"]
@@ -715,7 +758,7 @@ graph TB
             SCX1["scx_rusty"]
             SCX2["scx_lavd"]
             SCX3["scx_bpfland"]
-            SCX4["scx_layered"]
+            SCX4["scx_flash"]
         end
         
         SchedState["📋 /sys/kernel/sched_ext/state<br/>(Active Scheduler)"]
@@ -768,7 +811,7 @@ graph TB
 ### Testing Environment
 - **Network Latency**: Port forwarding adds minimal latency that wouldn't exist in bare metal deployments
 - **Resource Isolation**: VM provides perfect isolation but doesn't test scheduler behavior under system-wide contention
-- **Fixed Kernel Version**: Tests specific kernel version (6.12.6), scheduler behavior may vary across versions
+- **Fixed Kernel Version**: Tests one kernel version at a time (default 6.12.107 LTS; set `KERNEL_VERSION` to compare). Scheduler behaviour varies materially across kernel versions
 - **Limited Schedulers**: Only tests available sched_ext schedulers, not all possible scheduling policies
 
 ### Measurement Accuracy

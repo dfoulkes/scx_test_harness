@@ -8,14 +8,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_ROOT/kernel-build}"
-KERNEL_VERSION="${KERNEL_VERSION:-6.12.6}"
+# Kernel built for the test VM.
+#
+# Default is the current 6.12 LTS point release. sched_ext landed in 6.12, but
+# 6.12.6 (the previous default) was a very early point release in that series.
+#
+# Scheduler behaviour is genuinely kernel-dependent - scx_rusty, for example,
+# crashes in rusty_init_task on kernels >= 7.1.5 with scx <= v1.1.2 (fixed
+# upstream in v1.1.3, PR #3721). If you want results that reflect a modern
+# desktop rather than LTS, set:
+#   KERNEL_VERSION=7.1.12 ./scripts/build-kernel.sh
+KERNEL_VERSION="${KERNEL_VERSION:-6.12.107}"
 NUM_JOBS="${NUM_JOBS:-$(nproc)}"
+
+# kernel.org organises tarballs by major series (v6.x, v7.x). Derive it rather
+# than hardcoding, so bumping across a major release does not 404.
+KERNEL_SERIES="v${KERNEL_VERSION%%.*}.x"
 
 echo "=========================================="
 echo "Building Custom Kernel with sched_ext"
 echo "=========================================="
 echo ""
-echo "Kernel Version: $KERNEL_VERSION"
+echo "Kernel Version: $KERNEL_VERSION ($KERNEL_SERIES)"
 echo "Build Directory: $BUILD_DIR"
 echo "Parallel Jobs: $NUM_JOBS"
 echo ""
@@ -52,7 +66,12 @@ cd "$BUILD_DIR"
 # Download kernel source if not already present
 if [ ! -f "linux-${KERNEL_VERSION}.tar.xz" ]; then
     echo "Downloading Linux ${KERNEL_VERSION}..."
-    wget "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
+    if ! wget "https://cdn.kernel.org/pub/linux/kernel/${KERNEL_SERIES}/linux-${KERNEL_VERSION}.tar.xz"; then
+        echo "" >&2
+        echo "ERROR: could not download linux-${KERNEL_VERSION}.tar.xz from ${KERNEL_SERIES}." >&2
+        echo "       Check the version exists: https://cdn.kernel.org/pub/linux/kernel/${KERNEL_SERIES}/" >&2
+        exit 1
+    fi
 fi
 
 # Extract if not already extracted

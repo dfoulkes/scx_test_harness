@@ -10,9 +10,14 @@ SSH_KEY="$HOME/.ssh/scheduler_test_vm"
 SSH_PORT="${SSH_PORT:-2222}"
 VM_USER="${VM_USER:-debian}"
 
+# shellcheck source=lib/scx-common.sh
+source "$SCRIPT_DIR/lib/scx-common.sh"
+
 echo "=========================================="
 echo "Building Schedulers in VM"
 echo "=========================================="
+echo ""
+echo "scx Ref: $SCX_REF"
 echo ""
 
 # Check if VM is running
@@ -44,58 +49,66 @@ fi
 echo "Building schedulers on VM kernel: $KERNEL_VERSION"
 echo ""
 
-# Build schedulers in VM
+# Build schedulers in VM. SCX_REF is passed through so the VM builds the same
+# pinned upstream ref as the host scripts.
 ssh -p $SSH_PORT -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    $VM_USER@localhost "bash -s" <<'REMOTE_SCRIPT'
+    $VM_USER@localhost "SCX_REF='$SCX_REF' SCX_REPO='$SCX_REPO' bash -s" <<'REMOTE_SCRIPT'
 set -e
+
+SCX_DIR="$HOME/scx"
 
 # Install Rust if not present
 if ! command -v cargo &> /dev/null; then
     echo "Installing Rust..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
 fi
+source "$HOME/.cargo/env" 2>/dev/null || true
 
-# Clone scx if not present
-if [ ! -d "$HOME/scx" ]; then
+# Clone or update scx, then pin
+if [ ! -d "$SCX_DIR/.git" ]; then
     echo "Cloning sched_ext repository..."
-    git clone https://github.com/sched-ext/scx.git "$HOME/scx"
+    git clone "$SCX_REPO" "$SCX_DIR"
+else
+    echo "Updating existing scx checkout..."
+    git -C "$SCX_DIR" fetch --all --tags --prune
 fi
 
-cd "$HOME/scx"
-git pull || true
+echo "Checking out pinned ref: $SCX_REF"
+git -C "$SCX_DIR" checkout --detach "$SCX_REF"
+echo "scx is at: $(git -C "$SCX_DIR" describe --tags --always)"
 
-# Build C schedulers
+# Layout preflight - upstream removed the Makefile/meson build and scheds/c at
+# v1.1.0. Fail loudly rather than silently producing nothing.
+if [ ! -f "$SCX_DIR/Cargo.toml" ] || [ ! -d "$SCX_DIR/scheds/rust" ]; then
+    echo "ERROR: scx layout at ref '$SCX_REF' is not the expected Cargo workspace." >&2
+    echo "       Expected $SCX_DIR/Cargo.toml and $SCX_DIR/scheds/rust." >&2
+    exit 1
+fi
+
+# Build the workspace.
+# Parallelism is limited to avoid OOM: a 16GB VM cannot survive LTO linking of
+# the full workspace at -j$(nproc).
 echo ""
-echo "Building C schedulers..."
-source "$HOME/.cargo/env"
-export PATH=/usr/sbin:$PATH
-make -j$(nproc)
+echo "Building scx workspace (cargo)..."
+cd "$SCX_DIR"
+cargo build --release -j"${CARGO_JOBS:-2}" --workspace
 
-# Install C schedulers
-echo "Installing C schedulers..."
-sudo make install
-
-# Build Rust schedulers
+# Install every scheduler that was built
 echo ""
-echo "Building Rust schedulers..."
-cd scheds/rust
-# Limit parallelism to avoid OOM (16GB VM has limited memory for LTO builds)
-# Using -j2 instead of -j$(nproc) to prevent SIGKILL during link-time optimization
-cargo build --release -j2 --workspace
+echo "Installing schedulers to /usr/local/bin..."
+mapfile -t BUILT < <(find "$SCX_DIR/target/release" -maxdepth 1 -type f -executable \
+    -name 'scx_*' ! -name '*.d' | sort)
 
-# Install Rust schedulers
-echo "Installing Rust schedulers..."
-sudo cp ../../target/release/scx_rusty \
-    ../../target/release/scx_lavd \
-    ../../target/release/scx_bpfland \
-    ../../target/release/scx_layered \
-    /usr/local/bin/ 2>/dev/null || true
-sudo chmod +x /usr/local/bin/scx_* 2>/dev/null || true
+if [ ${#BUILT[@]} -eq 0 ]; then
+    echo "ERROR: cargo reported success but no scx_* binaries were produced." >&2
+    exit 1
+fi
+
+sudo install -m 0755 "${BUILT[@]}" /usr/local/bin/
 
 echo ""
-echo "Installed schedulers:"
-ls -1 /usr/local/bin/scx_* 2>/dev/null || echo "  (no schedulers found)"
+echo "Installed ${#BUILT[@]} schedulers:"
+ls -1 /usr/local/bin/scx_* | sed 's|.*/|  |'
 REMOTE_SCRIPT
 
 echo ""

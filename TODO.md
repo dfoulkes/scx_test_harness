@@ -1,13 +1,25 @@
 # TODO: Complete Scheduler Testing Setup
 
-## Current Status (Jan 16, 2026 - 12:47 AM)
+> **⚠️ Superseded — this is the January 2026 bring-up log, kept for the kernel/GRUB
+> troubleshooting notes only.** The scheduler and kernel versions below are stale.
+>
+> **Current state (2026-08-28):**
+> - `scx` is pinned to **v1.1.3** in `scripts/lib/scx-common.sh` (was: unpinned `main`)
+> - Build is **cargo-only** — upstream deleted the Makefile, meson build and `scheds/c` at v1.1.0
+> - Default VM kernel is **6.12.107** (was 6.12.6); `KERNEL_VERSION=7.1.12` for desktop parity
+> - Default roster is **6 schedulers + CFS**, override via `SCHEDULERS=...`
+> - `vm-scheduler-switch.sh` now **verifies the scheduler actually attached** and fails loudly
+>
+> Commands below that reference `make`, `sudo make install` or `scheds/c` no longer apply.
+
+## Original Status (Jan 16, 2026 - 12:47 AM)
 
 ### ✅ Completed
 - Spring Boot banking app with 30 JUnit tests (7-10 seconds execution)
 - Kafka made optional for tests
 - VM setup script created with automated kernel build
 - Custom kernel 6.12.6-schedext built successfully
-- Schedulers (scx_rusty, scx_lavd, scx_bpfland, scx_layered) sources ready
+- Schedulers (scx_rusty, scx_lavd, scx_bpfland, scx_layered) sources ready *(roster since expanded)*
 - Identified all issues with kernel config and GRUB boot
 
 ### ❌ Issues Found

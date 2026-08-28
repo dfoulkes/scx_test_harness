@@ -45,3 +45,4 @@ spring-boot-app/target/
 
 # ignore kernel and sched_ext build artifacts
 kernel-build/
+scheduler-build/

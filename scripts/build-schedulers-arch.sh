@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Build sched_ext schedulers on the host (Debian/Ubuntu)
-# Much faster than building in the VM
+# Build sched_ext schedulers on Arch Linux
+# Optimized for host system builds
 
 set -e
 
@@ -14,7 +14,7 @@ NUM_JOBS="${NUM_JOBS:-$(nproc)}"
 source "$SCRIPT_DIR/lib/scx-common.sh"
 
 echo "=========================================="
-echo "Building sched_ext Schedulers"
+echo "Building sched_ext Schedulers (Arch Linux)"
 echo "=========================================="
 echo ""
 echo "Build Directory: $BUILD_DIR"
@@ -22,28 +22,39 @@ echo "Parallel Jobs:   $NUM_JOBS"
 echo "scx Ref:         $SCX_REF"
 echo ""
 
-# Check and install prerequisites
+# Check and install prerequisites (Arch package names)
 echo "Checking prerequisites..."
 MISSING_PACKAGES=()
 
-for pkg in git clang llvm lld pkg-config libelf-dev libbpf-dev; do
-    if ! command -v ${pkg%-dev} &> /dev/null && ! dpkg -l | grep -q "^ii  $pkg"; then
-        MISSING_PACKAGES+=($pkg)
+declare -A ARCH_PACKAGES=(
+    ["git"]="git"
+    ["clang"]="clang"
+    ["llvm"]="llvm"
+    ["lld"]="lld"
+    ["pkg-config"]="pkgconf"
+    ["libelf"]="libelf"
+    ["libbpf"]="libbpf"
+    ["zlib"]="zlib"
+    ["openssl"]="openssl"
+    ["make"]="make"
+)
+
+for pkg in "${!ARCH_PACKAGES[@]}"; do
+    if ! pacman -Q "${ARCH_PACKAGES[$pkg]}" &> /dev/null; then
+        MISSING_PACKAGES+=("${ARCH_PACKAGES[$pkg]}")
     fi
 done
 
 # Check for Rust
 if ! command -v cargo &> /dev/null; then
-    echo "Installing Rust..."
+    echo "Installing Rust via rustup..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     source "$HOME/.cargo/env"
 fi
 
 if [ ${#MISSING_PACKAGES[@]} -ne 0 ]; then
     echo "Installing missing packages: ${MISSING_PACKAGES[*]}"
-    sudo apt-get update
-    sudo apt-get install -y build-essential git clang llvm lld pkg-config \
-        libelf-dev zlib1g-dev libbpf-dev linux-tools-common linux-tools-generic
+    sudo pacman -S --needed --noconfirm base-devel "${MISSING_PACKAGES[@]}"
 fi
 
 mkdir -p "$BUILD_DIR"
@@ -71,5 +82,8 @@ echo "$BUILT" | sed 's|.*/|  |'
 echo ""
 echo "Built $(echo "$BUILT" | wc -l) schedulers."
 echo ""
-echo "Next steps:"
-echo "  1. Install schedulers to VM with: $SCRIPT_DIR/install-schedulers-to-vm.sh"
+echo "To run scx_lavd:"
+echo "  sudo $BUILD_DIR/scx/target/release/scx_lavd -v"
+echo ""
+echo "To install to the VM:"
+echo "  $SCRIPT_DIR/install-schedulers-to-vm.sh"
