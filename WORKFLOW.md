@@ -9,7 +9,7 @@ This project tests different Linux CPU schedulers (sched_ext) with a Spring Boot
 ```bash
 ./scripts/build-kernel.sh
 ```
-- Downloads Linux 6.12.6 source
+- Downloads Linux 6.12.107 source (override with `KERNEL_VERSION`)
 - Enables CONFIG_SCHED_CLASS_EXT and DEBUG_INFO_BTF
 - Builds with all available CPU cores (~32 threads on 7950x3d)
 - Outputs: `kernel-build/*.deb` packages
@@ -59,7 +59,7 @@ This project tests different Linux CPU schedulers (sched_ext) with a Spring Boot
 ssh -p 2222 -i ~/.ssh/scheduler_test_vm debian@localhost 'uname -r && cat /sys/kernel/sched_ext/state && systemctl is-active kafka && ls -1 /usr/local/bin/scx_*'
 ```
 Expected output:
-- Kernel: `6.12.6-schedext-g2d8ba96ff834`
+- Kernel: `6.12.107-schedext-*` (default; override with `KERNEL_VERSION`)
 - sched_ext state: `disabled` (ready to use)
 - Kafka status: `active`
 - 24 schedulers listed
@@ -75,7 +75,9 @@ Expected output:
 ## Available Schedulers
 
 - **C schedulers:** scx_simple, scx_qmap, scx_central, scx_userland, scx_nest, scx_flatcg, scx_pair, scx_prev, scx_sdt
-- **Rust schedulers:** scx_bpfland, scx_rusty, scx_lavd, scx_layered, scx_rlfifo, scx_rustland, scx_chaos, scx_cosmos, scx_beerland, scx_flash, scx_mitosis, scx_tickless, scx_wd40, scx_p2dq, scx_arena_selftests
+- **Schedulers (scx v1.1.3, 18 built):** scx_beerland, scx_bpfland, scx_cake, scx_chaos, scx_cosmos, scx_flash, scx_flow, scx_forge, scx_lavd, scx_layered, scx_mitosis, scx_mlfq, scx_p2dq, scx_pandemonium, scx_rlfifo, scx_rustland, scx_rusty, scx_tickless
+- **Not schedulers** (built by the same workspace, filtered out): scx_arena_selftests (selftests), scx_characterize (workload profiling tool)
+- **Note:** upstream deleted the C schedulers (`scheds/c`) at v1.1.0 - everything is Rust now, built as one cargo workspace
 
 ## Key Lessons Learned
 

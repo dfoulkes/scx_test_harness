@@ -141,11 +141,20 @@ ps -p $(cat vm/qemu.pid)
 
 ## Schedulers Tested
 
-- **cfs** - Default Linux Completely Fair Scheduler
-- **scx_rusty** - Rusty scheduler (good for multi-core)
-- **scx_lavd** - Low-latency scheduler
-- **scx_bpfland** - BPF-based scheduler
-- **scx_layered** - Layered scheduler
+Pinned to **scx v1.1.3**. Default roster:
+
+- **cfs** - Default Linux scheduler (baseline)
+- **scx_rusty** - multi-domain, throughput-oriented
+- **scx_lavd** - latency-criticality aware, low-latency
+- **scx_bpfland** - interactive-task prioritising
+- **scx_flash** - EDF-based, general purpose
+- **scx_p2dq** - queue-based, general purpose
+- **scx_tickless** - minimal-tick, throughput/server oriented
+
+Override the roster without editing anything:
+```bash
+SCHEDULERS="scx_rusty scx_lavd" ./scripts/run-scheduler-test.sh
+```
 
 ## Architecture
 

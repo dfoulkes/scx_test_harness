@@ -11,6 +11,9 @@ SSH_KEY="$HOME/.ssh/scheduler_test_vm"
 SSH_PORT="${SSH_PORT:-2222}"
 VM_USER="${VM_USER:-debian}"
 
+# shellcheck source=lib/scx-common.sh
+source "$SCRIPT_DIR/lib/scx-common.sh"
+
 echo "=========================================="
 echo "Installing Schedulers to VM"
 echo "=========================================="
@@ -30,24 +33,20 @@ if [ ! -d "$BUILD_DIR/scx" ]; then
     exit 1
 fi
 
-# Find built schedulers
+# Find built schedulers.
+# Note: upstream deleted scheds/c at v1.1.0 - there are no C schedulers any
+# more, and everything lands in the single cargo workspace target dir.
 echo "Finding built schedulers..."
-RUST_SCHEDULERS=$(find "$BUILD_DIR/scx/target/release" -maxdepth 1 -type f -executable -name "scx_*" 2>/dev/null | grep -v "\.d$" || true)
-C_SCHEDULERS=$(find "$BUILD_DIR/scx/build/scheds/c" -maxdepth 1 -type f -executable -name "scx_*" 2>/dev/null || true)
+SCHEDULERS=$(scx_built_binaries "$BUILD_DIR/scx")
 
-if [ -z "$RUST_SCHEDULERS" ] && [ -z "$C_SCHEDULERS" ]; then
-    echo "Error: No schedulers found"
+if [ -z "$SCHEDULERS" ]; then
+    echo "Error: No schedulers found in $BUILD_DIR/scx/target/release"
     echo "Build them first with: ./scripts/build-schedulers.sh"
     exit 1
 fi
 
-echo "Found schedulers:"
-echo "$RUST_SCHEDULERS" | while read -r sched; do
-    [ -n "$sched" ] && echo "  Rust: $(basename "$sched")"
-done
-echo "$C_SCHEDULERS" | while read -r sched; do
-    [ -n "$sched" ] && echo "  C: $(basename "$sched")"
-done
+echo "Found $(echo "$SCHEDULERS" | wc -l) schedulers:"
+echo "$SCHEDULERS" | sed 's|.*/|  |'
 echo ""
 
 # Create temp directory for schedulers
@@ -56,10 +55,7 @@ trap "rm -rf $TEMP_DIR" EXIT
 
 # Copy schedulers to temp directory
 echo "Preparing scheduler binaries..."
-echo "$RUST_SCHEDULERS" | while read -r sched; do
-    [ -n "$sched" ] && cp "$sched" "$TEMP_DIR/"
-done
-echo "$C_SCHEDULERS" | while read -r sched; do
+echo "$SCHEDULERS" | while read -r sched; do
     [ -n "$sched" ] && cp "$sched" "$TEMP_DIR/"
 done
 
@@ -71,7 +67,7 @@ scp -P $SSH_PORT -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile
 # Install to /usr/local/bin
 echo "Installing schedulers..."
 ssh -p $SSH_PORT -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    $VM_USER@localhost "sudo mv /tmp/scx_* /usr/local/bin/ && sudo chmod +x /usr/local/bin/scx_*"
+    $VM_USER@localhost "sudo install -m 0755 /tmp/scx_* /usr/local/bin/ && rm -f /tmp/scx_*"
 
 echo ""
 echo "=========================================="
@@ -83,4 +79,4 @@ ssh -p $SSH_PORT -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile
     $VM_USER@localhost "ls -1 /usr/local/bin/scx_*"
 echo ""
 echo "Test a scheduler with:"
-echo "  ./scripts/vm-ssh.sh 'sudo /usr/local/bin/scx_rusty'"
+echo "  ./scripts/vm-scheduler-switch.sh scx_lavd"

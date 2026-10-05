@@ -8,8 +8,26 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-SCHEDULERS=("scx_rusty" "scx_lavd" "scx_bpfland" "scx_layered")
-TEST_DURATION=300  # 5 minutes per scheduler
+# shellcheck source=lib/scx-common.sh
+source "$SCRIPT_DIR/lib/scx-common.sh"
+
+# Schedulers under test. Defaults to a representative spread of the scx v1.1.3
+# line rather than the original Jan-2026 four, which predated scx_flash,
+# scx_p2dq, scx_cosmos and scx_tickless.
+#
+# Override with e.g.:
+#   SCHEDULERS="scx_rusty scx_lavd" ./scripts/run-scheduler-test.sh
+#   SCHEDULERS="${SCX_ALL_SCHEDS[*]}" ./scripts/run-scheduler-test.sh
+#
+# scx_layered is omitted by default: it needs a layer config to be meaningful,
+# and scxctl/scx_loader cannot drive it.
+if [ -n "${SCHEDULERS:-}" ]; then
+    read -r -a SCHEDULERS <<< "$SCHEDULERS"
+else
+    SCHEDULERS=(scx_rusty scx_lavd scx_bpfland scx_flash scx_p2dq scx_tickless)
+fi
+
+TEST_DURATION="${TEST_DURATION:-300}"  # seconds per scheduler
 RESULTS_DIR="$PROJECT_ROOT/results/$(date +%Y%m%d_%H%M%S)"
 APP_URL="http://localhost:8080"
 VMAPP_PATH="/opt/banking-app"
@@ -20,6 +38,14 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/scheduler_test_vm}"
 RESTORE_SNAPSHOT="${RESTORE_SNAPSHOT:-}"  # Set to snapshot name to restore before tests
 
 mkdir -p "$RESULTS_DIR"
+
+# Stamp the run so results are self-describing rather than an undated snapshot
+{
+    echo "date=$(date -Is)"
+    echo "scx_ref=$SCX_REF"
+    echo "schedulers=${SCHEDULERS[*]}"
+    echo "test_duration=$TEST_DURATION"
+} > "$RESULTS_DIR/run-metadata.txt"
 
 # Check if VM is running
 check_vm_running() {
